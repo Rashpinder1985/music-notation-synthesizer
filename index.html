@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Music Notation Synthesizer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Notation Synthesizer with Waveform Visualization</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body {
@@ -24,6 +25,12 @@
         }
         select, input[type="range"] {
             margin-top: 5px;
+        }
+        #waveformCanvas {
+            margin-top: 30px;
+            width: 100%;
+            height: 200px;
+            background-color: black;
         }
     </style>
 </head>
@@ -50,6 +57,9 @@
 
     <button id="playButton">Play Melody</button>
 
+    <!-- Waveform Visualization -->
+    <canvas id="waveformCanvas"></canvas>
+
     <script>
         const NOTE_FREQUENCIES = {
             "C4": 261.63, "D4": 293.66, "E4": 329.63, "F4": 349.23, "G4": 392.00, "A4": 440.00, "B4": 493.88,
@@ -63,6 +73,8 @@
         const playButton = document.getElementById("playButton");
         const durationValueSpan = document.getElementById("durationValue");
         const tempoValueSpan = document.getElementById("tempoValue");
+        const waveformCanvas = document.getElementById("waveformCanvas");
+        const canvasCtx = waveformCanvas.getContext('2d');
 
         durationInput.addEventListener('input', function() {
             durationValueSpan.textContent = this.value;
@@ -72,30 +84,96 @@
             tempoValueSpan.textContent = this.value;
         });
 
-        playButton.addEventListener("click", () => {
-            const waveformType = waveformSelect.value;
+        // Adjust canvas size
+        waveformCanvas.width = window.innerWidth - 40; // Full width minus some padding
+        waveformCanvas.height = 200;
+
+        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let oscillator = null;
+
+        // Generate and visualize the waveform of each note
+        function visualizeWaveform(frequency, waveformType, duration, startTime) {
+            oscillator = audioContext.createOscillator();
+            oscillator.type = waveformType;
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime + startTime);
+            oscillator.connect(audioContext.destination);
+
+            const bufferLength = 2048;
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = bufferLength;
+            oscillator.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            let previousTime = startTime;
+
+            function draw() {
+                analyser.getByteTimeDomainData(dataArray);
+
+                canvasCtx.fillStyle = 'black';
+                canvasCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+
+                canvasCtx.lineWidth = 2;
+                canvasCtx.strokeStyle = 'cyan';
+                canvasCtx.beginPath();
+
+                const sliceWidth = waveformCanvas.width * 1.0 / bufferLength;
+                let x = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i] / 128.0; // Normalize data to range [0, 1]
+                    const y = v * waveformCanvas.height / 2;
+                    if (i === 0) {
+                        canvasCtx.moveTo(x, y);
+                    } else {
+                        canvasCtx.lineTo(x, y);
+                    }
+                    x += sliceWidth;
+                }
+
+                canvasCtx.lineTo(waveformCanvas.width, waveformCanvas.height / 2);
+                canvasCtx.stroke();
+            }
+
+            // Start drawing and oscillating
+            oscillator.start(audioContext.currentTime + startTime);
+            oscillator.stop(audioContext.currentTime + startTime + duration);
+
+            // Continuously update the waveform during the note duration
+            let drawInterval = setInterval(function() {
+                draw();
+            }, 30); // Update the waveform visualization every 30ms
+
+            // Stop drawing after the note is done
+            setTimeout(() => {
+                clearInterval(drawInterval);
+            }, duration * 1000); // Stop after the note's duration
+        }
+
+        playButton.addEventListener("click", async () => {
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume(); // Ensure the AudioContext is running
+            }
+
             const melody = melodyInput.value.split(" ");
             const duration = parseFloat(durationInput.value);
             const tempo = parseInt(tempoInput.value);
 
-            const silenceDuration = 60 / tempo; // Silence duration in seconds
+            const noteDuration = 60 / tempo; // Time per note (in seconds)
 
-            const synth = new Tone.Synth({
-                oscillator: {
-                    type: waveformType
-                }
-            }).toDestination();
+            let startTime = 0; // Start from now
 
-            let time = 0;
-            melody.forEach(note => {
+            // Visualize and play each note
+            melody.forEach((note) => {
                 const frequency = NOTE_FREQUENCIES[note];
+                const waveformType = waveformSelect.value;
+
                 if (frequency) {
-                    synth.triggerAttackRelease(frequency, duration, time);
+                    visualizeWaveform(frequency, waveformType, duration, startTime);
+                    startTime += noteDuration; // Increment time for next note
                 }
-                time += duration + silenceDuration;
             });
         });
-
     </script>
 </body>
 </html>
